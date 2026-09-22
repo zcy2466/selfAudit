@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Data
+data/contractnli/*.json
+data/cuad/*.json
+data/legalbench_rag/*.json
+
+# Results
+results/*.json
+results/*.csv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Docker
+.docker/
+
+# Logs
+logs/
+*.log

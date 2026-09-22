@@ -1,0 +1,39 @@
+[project]
+name = "selfaudit"
+version = "0.1.0"
+description = "SelfAudit: Heterogeneous Multi-Dimensional Reflection for Complex Document Auditing"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Fei Chen"},
+    {name = "Chenyu Zhang", email = "120242227084@ncepu.edu.cn"},
+]
+readme = "README.md"
+
+dependencies = [
+    "langchain>=0.3.14",
+    "langchain-openai>=0.2.12",
+    "langgraph>=0.2.59",
+    "openai>=1.58.1",
+    "pydantic>=2.7.4",
+    "pydantic-settings>=2.7.0",
+    "loguru>=0.7.3",
+    "numpy>=1.26.4",
+    "scikit-learn>=1.5.2",
+    "rank-bm25>=0.2.2",
+    "datasets>=3.2.0",
+    "requests>=2.32.3",
+    "python-dotenv>=1.0.1",
+    "tqdm>=4.66.0",
+    "tiktoken>=0.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
