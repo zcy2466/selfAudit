@@ -273,6 +273,33 @@ Synthesize all findings into a single verdict. Choose one of:
 """)
 
 # ============================================================
+# Single Scalar Confidence (ablation: w/o Multi-Dim)
+# ============================================================
+SRA_SINGLE_SCALAR_PROMPT = Template("""\
+# Role
+You are evaluating the overall quality of an audit conclusion. Provide a single confidence score.
+
+# Audit Subtasks and Results
+$audit_results
+
+# Task
+Rate the overall confidence in the audit conclusion on a scale of 0.0 to 1.0.
+Consider all available evidence and verification results holistically.
+- 1.0: Fully confident the conclusion is correct
+- 0.5: Moderate uncertainty
+- 0.0: No confidence
+
+# Output Format
+```json
+{
+    "confidence": 0.0-1.0,
+    "final_label": "Entailment/Contradiction/Not Mentioned",
+    "reasoning": "..."
+}
+```
+""")
+
+# ============================================================
 # Heterogeneous Verification
 # ============================================================
 HETEROGENEOUS_VERIFY_PROMPT = Template("""\

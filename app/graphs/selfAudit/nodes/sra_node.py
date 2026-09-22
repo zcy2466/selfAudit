@@ -12,7 +12,13 @@ The core contribution of SelfAudit. HCD-EA consists of:
    re-execute only the affected sub-pipeline.
 
 3. Heterogeneous Verification:
-   Uses Qwen2.5-7B-Instruct for independent confidence estimation.
+   Uses Qwen2.5-7B-Instruct for independent verification. When the
+   heterogeneous verdict disagrees with the primary, triggers one
+   additional reflection before finalizing.
+
+Ablation modes (set via state["ablation_mode"]):
+   "no_multidim" — single scalar confidence (1 LLM prompt) + blind re-execution
+   "no_heterov"  — skip heterogeneous verification (loses disagreement safeguard)
 """
 
 import numpy as np
@@ -23,6 +29,7 @@ from app.services.llm.prompts import (
     SRA_RFS_PROMPT,
     SRA_ESS_PROMPT,
     SRA_RCS_PROMPT,
+    SRA_SINGLE_SCALAR_PROMPT,
     SRA_FINAL_VERDICT_PROMPT,
 )
 from app.utils.logger import logger
@@ -43,6 +50,7 @@ def sra_node(state: AuditState) -> AuditState:
     tau = settings.HCD_TAU if settings else 0.75
     alpha = settings.HCD_ALPHA if settings else 0.5
     k_max = settings.HCD_K if settings else 3
+    ablation_mode = state.get("ablation_mode", "")
 
     llm_service = state.get("llm_service")
     embedding_service = state.get("embedding_service")
@@ -53,7 +61,47 @@ def sra_node(state: AuditState) -> AuditState:
     evidence_map = state.get("evidence_map", {})
     audit_points = state.get("audit_points", [])
 
-    # Step 1: Multi-dimensional confidence decomposition
+    # ================================================================
+    # BRANCH A: w/o Multi-Dim — single scalar confidence + blind re-execution
+    # ================================================================
+    if ablation_mode == "no_multidim":
+        single_conf, tentative_label = _compute_single_scalar_confidence(
+            state=state,
+            verification_results=verification_results,
+            llm_service=llm_service,
+        )
+        state["confidence_3d"] = Confidence3D(
+            rfs=single_conf, ess=single_conf, rcs=single_conf
+        )
+        logger.info(
+            f"SRA (no_multidim) iteration {iteration + 1}: "
+            f"scalar_confidence={single_conf:.3f}"
+        )
+
+        if single_conf < tau and iteration + 1 < k_max:
+            # Blind re-execution: no dimension → no selective attribution.
+            # Re-run the full pipeline from TPA.
+            state["reexecute_from"] = "tpa"
+            state["iteration"] = iteration + 1
+            logger.info(
+                f"SRA (no_multidim) triggers blind re-execution from TPA "
+                f"(iteration {iteration + 1}/{k_max})"
+            )
+        else:
+            verdict = Verdict(
+                final_label=tentative_label,
+                confidence=single_conf,
+                reasoning=f"Single scalar confidence: {single_conf:.3f}",
+                iteration=iteration,
+            )
+            state["verdict"] = verdict
+            state["reexecute_from"] = ""
+            state["iteration"] = iteration + 1
+        return state
+
+    # ================================================================
+    # BRANCH B: Full HCD-EA — 3D confidence + selective re-execution
+    # ================================================================
     confidence_3d = _compute_confidence_3d(
         state=state,
         verification_results=verification_results,
@@ -68,11 +116,7 @@ def sra_node(state: AuditState) -> AuditState:
         f"RCS={confidence_3d.rcs:.3f}, combined={confidence_3d.combined:.3f}"
     )
 
-    # Step 2: Conditional branching
     if confidence_3d.combined < tau and iteration + 1 < k_max:
-        # Error attribution via dependency graph.
-        # Maps the 3D confidence to pipeline nodes: RFS→ERA (retrieval quality),
-        # ESS→IA (inspection quality), RCS→TPA (task decomposition quality).
         node_confidences = {
             "tpa": confidence_3d.rcs,
             "era": confidence_3d.rfs,
@@ -84,11 +128,10 @@ def sra_node(state: AuditState) -> AuditState:
         state["reexecute_from"] = attribution.source_node
         state["iteration"] = iteration + 1
         logger.info(
-            f"SRA triggers re-execution from '{attribution.source_node}' "
+            f"SRA triggers selective re-execution from '{attribution.source_node}' "
             f"(iteration {iteration + 1}/{k_max})"
         )
     else:
-        # Step 3: Produce final verdict
         verdict = _produce_final_verdict(
             state=state,
             verification_results=verification_results,
@@ -98,15 +141,16 @@ def sra_node(state: AuditState) -> AuditState:
         state["verdict"] = verdict
         state["reexecute_from"] = ""
 
-        # Step 4: Heterogeneous verification (post-hoc independent check)
-        if heterogeneous_verifier is not None:
-            # Collect evidence from the verification phase
+        # Heterogeneous verification: when enabled, an independent model
+        # (Qwen2.5-7B) re-evaluates the verdict. If it disagrees, trigger
+        # one additional IA re-execution for the primary model to reconsider.
+        # The ablation (no_heterov) skips this safeguard entirely.
+        if heterogeneous_verifier is not None and ablation_mode != "no_heterov":
             evidence_items = []
             audit_rules = []
             for key, results_list in verification_results.items():
                 evidence = evidence_map.get(key, [])
                 evidence_items.extend(evidence[:3])
-                # Extract rule from the audit point
                 for ap in audit_points:
                     if f"{ap.objective}||{ap.audit_point}" == key:
                         audit_rules.append(ap.rule)
@@ -122,9 +166,79 @@ def sra_node(state: AuditState) -> AuditState:
             agreement = 1.0 if heterogeneous_verdict.final_label == verdict.final_label else 0.0
             state["heterogeneous_agreement"] = agreement
 
+            # Heterogeneous disagreement safeguard: when the independent
+            # verifier disagrees (different label, non-trivial confidence),
+            # give the primary model one more chance to re-inspect.
+            if (
+                agreement == 0.0
+                and heterogeneous_verdict.confidence > 0.5
+                and iteration + 1 < k_max
+            ):
+                logger.info(
+                    f"SRA heterogeneous disagreement detected "
+                    f"(primary={verdict.final_label}, hetero={heterogeneous_verdict.final_label})"
+                    f" — triggering extra IA re-execution"
+                )
+                state["reexecute_from"] = "ia"
+                state["iteration"] = iteration + 1
+                return state
+
         state["iteration"] = iteration + 1
 
     return state
+
+
+def _compute_single_scalar_confidence(
+    state: AuditState,
+    verification_results: dict,
+    llm_service,
+) -> tuple[float, str]:
+    """Compute a single aggregate confidence score (ablation: w/o Multi-Dim).
+
+    Uses ONE LLM prompt instead of decomposing into RFS/ESS/RCS.
+    Returns (confidence, tentative_label).
+    """
+    audit_results_text = ""
+    for ap in state.get("audit_points", []):
+        key = f"{ap.objective}||{ap.audit_point}"
+        results = verification_results.get(key, [])
+        dim_results = "; ".join(
+            f"{r.dimension}: {'Pass' if r.passed else 'Fail'} (conf={r.confidence:.2f})"
+            for r in results
+        )
+        audit_results_text += (
+            f"- Objective: {ap.objective}\n"
+            f"  Rule: {ap.rule}\n"
+            f"  Results: {dim_results}\n\n"
+        )
+
+    if llm_service:
+        try:
+            prompt = SRA_SINGLE_SCALAR_PROMPT.substitute(
+                audit_results=audit_results_text[:3000],
+            )
+            response = llm_service.generate_completion(prompt)
+            if response:
+                data = ValueParser.extract_json_from_output(response)
+                if data:
+                    return (
+                        float(data.get("confidence", 0.5)),
+                        data.get("final_label", "Not Mentioned"),
+                    )
+        except Exception:
+            pass
+
+    # Fallback heuristic
+    all_results = []
+    for results in verification_results.values():
+        all_results.extend(results)
+    passed_count = sum(1 for r in all_results if r.passed)
+    total = len(all_results) or 1
+    heuristic_conf = passed_count / total
+    label = "Entailment" if passed_count == total else (
+        "Contradiction" if passed_count == 0 else "Not Mentioned"
+    )
+    return heuristic_conf, label
 
 
 def _compute_confidence_3d(

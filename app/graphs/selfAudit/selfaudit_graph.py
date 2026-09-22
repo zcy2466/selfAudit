@@ -108,6 +108,7 @@ def create_initial_state(
     heterogeneous_verifier=None,
     heterogeneous_llm_service=None,
     settings=None,
+    ablation_mode: str = "",
 ) -> AuditState:
     """Create the initial AuditState with all injected dependencies."""
     return AuditState(
@@ -119,6 +120,7 @@ def create_initial_state(
         verification_results={},
         iteration=0,
         reexecute_from="",
+        ablation_mode=ablation_mode,
         llm_service=llm_service,
         embedding_service=embedding_service,
         era_retriever=era_retriever,

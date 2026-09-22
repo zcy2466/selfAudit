@@ -42,8 +42,9 @@ class AuditState(TypedDict, total=False):
     heterogeneous_verdict: Verdict | None
     heterogeneous_agreement: float | None
 
-    # Hierarchical semantic tree (built once, reused across re-executions)
+    # ERA / SRA shared state
     document_tree: Any
+    ablation_mode: str
 
     # Injected dependencies (not serialized)
     llm_service: Any

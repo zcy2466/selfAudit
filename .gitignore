@@ -22,8 +22,14 @@ data/cuad/*.json
 data/legalbench_rag/*.json
 
 # Results
-results/*.json
-results/*.csv
+results/
+
+# Tests
+tests/
+
+# Build
+Dockerfile
+pyproject.toml
 
 # OS
 .DS_Store

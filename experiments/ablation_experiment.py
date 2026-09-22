@@ -124,13 +124,14 @@ class AblationExperiment(BaseExperiment):
     # ---- HCD-EA variant implementations ----
 
     def _run_with_single_scalar_confidence(self, query: str, document_text: str) -> dict:
-        """w/o Multi-Dim: use single scalar confidence instead of 3D decomposition."""
-        result = self._run_selfaudit(query, document_text)
-        # Override confidence with a single scalar (use combined only)
-        conf = result.get("confidence_3d", {})
-        if hasattr(conf, "combined"):
-            result["confidence"] = conf.combined
-        return result
+        """w/o Multi-Dim: single scalar confidence with blind re-execution.
+
+        The SRA node reads ablation_mode="no_multidim" from state and:
+        - Uses ONE LLM prompt for aggregate confidence (skips RFS/ESS/RCS)
+        - On low confidence: blind full-pipeline re-execution from TPA
+          (no dimension → no selective attribution possible)
+        """
+        return self._run_selfaudit(query, document_text, ablation_mode="no_multidim")
 
     def _run_with_blind_reexecution(self, query: str, document_text: str) -> dict:
         """w/o Dep-Attr: blind full-pipeline re-execution (no error attribution).
@@ -151,19 +152,14 @@ class AblationExperiment(BaseExperiment):
         return result
 
     def _run_with_same_model_verifier(self, query: str, document_text: str) -> dict:
-        """w/o Hetero-V: use same GPT-4o model for verification (no Qwen2.5-7B).
+        """w/o Hetero-V: skip heterogeneous verification safeguard.
 
-        The SRA confidence estimation and final verdict already use GPT-4o.
-        This variant explicitly confirms no heterogeneous model is involved
-        by ensuring the heterogeneous_verifier is None.
+        The SRA node reads ablation_mode="no_heterov" from state and skips
+        the heterogeneous disagreement check. Without this safeguard, the
+        primary model's verdict is final even when a second independent
+        model might have disagreed.
         """
-        # Temporarily disable heterogeneous verifier
-        orig_verifier = self.heterogeneous_verifier
-        self.heterogeneous_verifier = None
-        try:
-            return self._run_selfaudit(query, document_text)
-        finally:
-            self.heterogeneous_verifier = orig_verifier
+        return self._run_selfaudit(query, document_text, ablation_mode="no_heterov")
 
     # ---- Agent ablation implementations ----
 

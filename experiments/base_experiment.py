@@ -66,7 +66,7 @@ class BaseExperiment(ABC):
             settings=self.settings,
         )
 
-    def _create_state(self, query: str, document_text: str, rules: list[str] | None = None):
+    def _create_state(self, query: str, document_text: str, rules: list[str] | None = None, ablation_mode: str = ""):
         """Create an initial AuditState for a single sample."""
         tree_builder = HierarchicalTreeBuilder(embedding_service=self.embedding_service)
         hybrid_index = HybridIndex()
@@ -91,11 +91,12 @@ class BaseExperiment(ABC):
             heterogeneous_verifier=self.heterogeneous_verifier,
             heterogeneous_llm_service=self.heterogeneous_llm_service,
             settings=self.settings,
+            ablation_mode=ablation_mode,
         )
 
-    def _run_selfaudit(self, query: str, document_text: str, rules: list[str] | None = None) -> dict:
+    def _run_selfaudit(self, query: str, document_text: str, rules: list[str] | None = None, ablation_mode: str = "") -> dict:
         """Run the SelfAudit pipeline on a single sample and return results."""
-        state = self._create_state(query, document_text, rules)
+        state = self._create_state(query, document_text, rules, ablation_mode=ablation_mode)
 
         # Build index for document
         self._build_document_index(state, document_text)
